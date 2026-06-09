@@ -1,0 +1,54 @@
+// CLI エントリポイント (native バックエンド) — オフライン口パク precompute。
+//
+// 入力: 環境変数 FIZZ_LIPSYNC_INPUT に「raw f32 LE モノラルサンプル」のファイル
+// パス (例: ffmpeg -f f32le で書き出したもの)。1 サンプル = 4 byte。
+// ブロックサイズ: FIZZ_LIPSYNC_BLOCK (既定 512 サンプル ≈ 出力 FPS を決める)。
+//
+// 出力: 1 ブロック 1 行 NDJSON  {"i":フレーム番号,"mouth":口の開き[0,1]}
+// ランタイムはこの「口パクカーブ」を再生に同期させるだけでよい (live 解析より
+// タブ間同期が正確)。同じ DSP コア (mod.almd) が wasm/AudioWorklet 側でも走る。
+
+import self as ls
+import bytes
+import fs
+import env
+import json
+import value
+import string
+import int
+
+effect fn run(path: String, block: Int) -> Result[Unit, String] = {
+  let raw = fs.read_bytes_raw(path)!
+  let total = bytes.len(raw) / 4   // f32 サンプル数
+  let b = if block < 1 then 1 else block
+  var prev = 0.0
+  var i = 0
+  var frame = 0
+  while i < total {
+    let n = if i + b <= total then b else total - i
+    let samples = bytes.read_f32_le_array(raw, i * 4, n)
+    prev = ls.step_default(samples, prev)
+    println(json.stringify(value.object([
+      ("i", value.int(frame)), ("mouth", value.float(prev)),
+    ])))
+    i = i + b
+    frame = frame + 1
+  }
+  ok(())
+}
+
+effect fn main() -> Unit = {
+  let path = string.trim(env.get("FIZZ_LIPSYNC_INPUT") ?? "")
+  let block = match int.parse(string.trim(env.get("FIZZ_LIPSYNC_BLOCK") ?? "")) {
+    ok(n)  => n,
+    err(_) => 512,
+  }
+  if path == "" then {
+    eprintln("[lipsync] set FIZZ_LIPSYNC_INPUT to a raw f32-LE mono samples file")
+  } else {
+    match run(path, block) {
+      err(e) => eprintln("[lipsync] ${e}"),
+      ok(_)  => (),
+    }
+  }
+}

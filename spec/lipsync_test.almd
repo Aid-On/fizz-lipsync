@@ -1,0 +1,47 @@
+import self as ls
+
+local fn near(a: Float, b: Float) -> Bool = {
+  let d = a - b
+  if d < 0.0 then (0.0 - d) < 0.0005 else d < 0.0005
+}
+
+test "rms of constant amplitude equals that amplitude" {
+  assert(near(ls.rms([0.5, 0.5, 0.5, 0.5]), 0.5))
+  assert(near(ls.rms([1.0, -1.0, 1.0, -1.0]), 1.0))
+}
+
+test "rms of silence / empty is 0" {
+  let empty: List[Float] = []
+  assert(near(ls.rms([0.0, 0.0, 0.0]), 0.0))
+  assert(near(ls.rms(empty), 0.0))
+}
+
+test "loud input opens the mouth toward its target" {
+  // floor=0.01, gain=4 → rms 0.5 の target = clamp01((0.5-0.01)*4) = 1.0
+  // attack で 0 から 1 に寄る (1 ステップで attack ぶん)
+  let loud = [0.5, 0.5, 0.5, 0.5]
+  let m1 = ls.step(loud, 0.0, 0.6, 0.15, 4.0, 0.01)
+  assert(near(m1, 0.6))   // 0 + (1-0)*0.6
+  let m2 = ls.step(loud, m1, 0.6, 0.15, 4.0, 0.01)
+  assert(m2 > m1)         // さらに開く
+  assert(m2 < 1.0)
+}
+
+test "silence closes the mouth via release" {
+  // 開いた状態 0.8 から無音 → target 0、release=0.15 で少しずつ閉じる
+  let silence = [0.0, 0.0, 0.0, 0.0]
+  let m1 = ls.step(silence, 0.8, 0.6, 0.15, 4.0, 0.01)
+  assert(near(m1, 0.68))  // 0.8 + (0-0.8)*0.15 = 0.68
+  assert(m1 < 0.8)
+}
+
+test "below the noise floor stays shut" {
+  // 微小入力 (rms < floor) → target 0
+  let quiet = [0.001, -0.001, 0.001, -0.001]
+  assert(near(ls.step(quiet, 0.0, 0.6, 0.15, 4.0, 0.01), 0.0))
+}
+
+test "mouth value is clamped to [0,1]" {
+  // 巨大 gain でも 1 を超えない
+  assert(near(ls.step([0.9, 0.9], 0.0, 1.0, 0.15, 100.0, 0.0), 1.0))
+}

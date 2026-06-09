@@ -1,0 +1,51 @@
+// fizz_lipsync — 口パク (lipsync) の DSP コア。
+//
+// 責務 (一行): 音声サンプルの RMS を取り、エンベロープ追従で滑らかな
+// 口の開き値 [0,1] に変換する。
+//
+// 設計の肝: **DSP は Almide で 1 回だけ書き、native と wasm の両バックエンドで
+// 使う**。
+//   - native: オフライン precompute (音声バイト → 口パクカーブ) の CLI (main.almd)
+//   - wasm:   AudioWorklet の中で 1 render quantum (128 sample) ごとに呼ぶ
+//             (worklet/lipsync-processor.js)
+// Web Audio の I/O (AudioContext / 再生 / マイク) はブラウザ専用なので JS グルー
+// が担当し、**数学はこの Almide コアが担う**。
+//
+// エンベロープ追従は一極ローパス: target に attack/release 係数で寄せる
+// (口が開く時は速く=attack 大、閉じる時はゆっくり=release 小)。
+
+import list
+import math
+import int
+
+// 既定パラメータ。short-block (128 sample @ 48kHz ≈ 2.7ms) を想定。
+let DEFAULT_ATTACK = 0.6    // 開く速さ (0..1、大きいほど即応)
+let DEFAULT_RELEASE = 0.15  // 閉じる速さ (小さいほどゆっくり)
+let DEFAULT_GAIN = 4.0      // RMS → 口の開きの増幅
+let DEFAULT_FLOOR = 0.01    // ノイズフロア (これ未満は無音扱い)
+
+fn clamp01(x: Float) -> Float =
+  if x < 0.0 then 0.0 else if x > 1.0 then 1.0 else x
+
+// f32 サンプル列の RMS (二乗平均平方根)。空なら 0。
+fn rms(samples: List[Float]) -> Float = {
+  let n = list.len(samples)
+  if n == 0 then 0.0
+  else {
+    let sumsq = list.fold(samples, 0.0, (acc, x) => acc + x * x)
+    math.sqrt(sumsq / int.to_float(n))
+  }
+}
+
+// 1 ブロックぶん口パク値を 1 ステップ進める (エンベロープ追従)。
+// prev: 前ブロックの口の開き (状態)。target = clamp01((rms - floor) * gain) に
+// attack/release で寄せた値を返す。これがそのまま次フレームの prev になる。
+fn step(samples: List[Float], prev: Float, attack: Float, release: Float, gain: Float, floor: Float) -> Float = {
+  let target = clamp01((rms(samples) - floor) * gain)
+  let coef = if target > prev then attack else release
+  clamp01(prev + (target - prev) * coef)
+}
+
+// 既定パラメータ版 (呼び出しを短く)。
+fn step_default(samples: List[Float], prev: Float) -> Float =
+  step(samples, prev, DEFAULT_ATTACK, DEFAULT_RELEASE, DEFAULT_GAIN, DEFAULT_FLOOR)

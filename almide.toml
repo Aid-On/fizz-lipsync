@@ -1,0 +1,4 @@
+[package]
+name = "fizz_lipsync"
+version = "0.1.0"
+description = "Fizz lipsync DSP — audio RMS -> envelope-followed mouth value [0,1]. One Almide core, two backends: native (offline precompute CLI) and wasm (AudioWorklet)."

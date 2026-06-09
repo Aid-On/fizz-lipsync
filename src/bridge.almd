@@ -1,0 +1,30 @@
+// バックエンド境界のブリッジ — wasm / native-cdylib エントリ。
+//
+// AudioWorklet (wasm) や C ホスト (cdylib) は、raw な f32 LE サンプルを線形
+// メモリに書いて `lipsync_step` を呼ぶ。alloc は起動時に 1 回だけ (例: 128
+// sample = 512 byte) 確保して使い回すので、毎 render quantum の確保は無い。
+//
+// DSP 本体は mod.almd (純 Almide、native 実行ファイルと共有)。ここは ABI 薄皮。
+//
+// ビルド:
+//   wasm:   almide build src/bridge.almd --target wasm
+//   npm:    almide build src/bridge.almd --target npm
+//   cdylib: almide build src/bridge.almd --cdylib
+//
+// (純 DSP は @export 属性が native 実行ファイル build と相性が悪いため別ファイル。
+//  main.almd は mod だけを使い、この bridge は import しない。)
+
+import self as ls
+import bytes
+
+@export(wasm, "lipsync_alloc")
+@export(c, "lipsync_alloc")
+fn lipsync_alloc(len: Int) -> RawPtr = bytes.as_mut_ptr(bytes.new(len))
+
+@export(wasm, "lipsync_step")
+@export(c, "lipsync_step")
+fn lipsync_step(ptr: RawPtr, n: Int, prev: Float, attack: Float, release: Float, gain: Float, floor: Float) -> Float = {
+  let buf = bytes.from_raw_ptr(ptr, n * 4)
+  let samples = bytes.read_f32_le_array(buf, 0, n)
+  ls.step(samples, prev, attack, release, gain, floor)
+}

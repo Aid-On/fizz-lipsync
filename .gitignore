@@ -1,0 +1,6 @@
+build/
+*.wasm
+*.cwasm
+fizz-lipsync
+.almide/
+*.f32

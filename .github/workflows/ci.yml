@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  ALMIDE_VERSION: v0.26.6
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: ~/.almide
+          key: ${{ runner.os }}-almide-${{ env.ALMIDE_VERSION }}-${{ hashFiles('almide.toml') }}
+          restore-keys: ${{ runner.os }}-almide-${{ env.ALMIDE_VERSION }}-
+      - name: Install Almide (prebuilt release)
+        run: |
+          curl -fsSL -o /tmp/almide.tar.gz \
+            "https://github.com/almide/almide/releases/download/${ALMIDE_VERSION}/almide-linux-x86_64.tar.gz"
+          tar xzf /tmp/almide.tar.gz -C /tmp
+          sudo install /tmp/almide-linux-x86_64/almide /usr/local/bin/almide
+          almide --version
+      - name: Type-check (native CLI)
+        run: almide check src/main.almd
+      - name: Run tests (DSP core)
+        run: almide test spec/lipsync_test.almd
+      - name: Build native precompute CLI
+        run: |
+          mkdir -p build
+          almide build src/main.almd -o build/fizz-lipsync
