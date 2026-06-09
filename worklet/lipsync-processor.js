@@ -33,22 +33,34 @@ class LipsyncProcessor extends AudioWorkletProcessor {
   }
 
   async _init(wasmBytes) {
-    const { instance } = await WebAssembly.instantiate(wasmBytes, {});
+    // fizz_lipsync.wasm は WASI import を宣言する (実際の DSP は使わない)。
+    // 呼ばれない前提で no-op スタブを与える。
+    const mod = await WebAssembly.compile(wasmBytes);
+    const imports = {};
+    for (const i of WebAssembly.Module.imports(mod)) {
+      (imports[i.module] ??= {})[i.name] = () => 0;
+    }
+    const instance = await WebAssembly.instantiate(mod, imports);
     this.ex = instance.exports;
     this.mem = this.ex.memory;
-    // 128 sample 分 (f32 = 4 byte) のバッファを 1 度だけ確保し、毎 quantum 使い回す。
-    this.ptr = Number(this.ex.lipsync_init(128 * 4));
+    // ヒープ/グローバル初期化のため _start を一度走らせる (proc_exit stub で抜ける)。
+    try { this.ex._start(); } catch (_) { /* proc_exit */ }
+    // 128 sample のバッファを 1 度だけ確保し、書き込みオフセットを得る。毎 quantum 使い回す。
+    this.n = 128;
+    this.ptr = Number(this.ex.lipsync_init(BigInt(this.n)));
     this.ready = true;
   }
 
   process(inputs) {
     const ch = inputs[0]?.[0];
     if (!ch || !this.ready) return true;
-    // 入力ブロックを wasm メモリの確保済みオフセットへ書き込む。
-    new Float32Array(this.mem.buffer, this.ptr, ch.length).set(ch);
+    // 入力ブロック (128 sample) を wasm メモリの確保済みオフセットへ書き込む。
+    // メモリは grow で再確保され得るので毎回 view を作る (buffer が detach する)。
+    new Float32Array(this.mem.buffer, this.ptr, this.n).set(ch.subarray(0, this.n));
     // 1 ステップ進める。前フレームの mouth を渡し、更新後を受け取る。
+    // 引数は Float のみ = JS の number でそのまま呼べる (Int は wasm i64=BigInt のため避けた)。
     this.mouth = this.ex.lipsync_step(
-      ch.length, this.mouth, this.attack, this.release, this.gain, this.floor,
+      this.mouth, this.attack, this.release, this.gain, this.floor,
     );
     this.port.postMessage(this.mouth);
     return true;

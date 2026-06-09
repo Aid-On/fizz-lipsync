@@ -1,30 +1,47 @@
-// バックエンド境界のブリッジ — wasm / native-cdylib エントリ。
-//
-// AudioWorklet (wasm) や C ホスト (cdylib) は、raw な f32 LE サンプルを線形
-// メモリに書いて `lipsync_step` を呼ぶ。alloc は起動時に 1 回だけ (例: 128
-// sample = 512 byte) 確保して使い回すので、毎 render quantum の確保は無い。
+// バックエンド境界のブリッジ — wasm (AudioWorklet) エントリ。
 //
 // DSP 本体は mod.almd (純 Almide、native 実行ファイルと共有)。ここは ABI 薄皮。
 //
-// ビルド:
-//   wasm:   almide build src/bridge.almd --target wasm
-//   npm:    almide build src/bridge.almd --target npm
-//   cdylib: almide build src/bridge.almd --cdylib
+// 設計: 再利用バッファをモジュールグローバルに 1 度だけ確保し、その線形メモリ
+// オフセットを JS に返す (as_mut_ptr)。JS (worklet) は毎 render quantum その
+// オフセットへ f32 サンプルを書き、lipsync_step を呼ぶ。グローバルが Bytes を
+// 保持し続けるので解放されず、raw ポインタを跨いで持ち回る必要が無い。
 //
-// (純 DSP は @export 属性が native 実行ファイル build と相性が悪いため別ファイル。
-//  main.almd は mod だけを使い、この bridge は import しない。)
+// hot path (lipsync_step) の引数は Float だけ = JS からは普通の number で呼べる
+// (Int は wasm i64 → JS BigInt になるので避ける)。サンプル数は init 時に保存。
+//
+// ビルド: almide build src/bridge.almd --target wasm -o build/lipsync.wasm
 
 import self as ls
 import bytes
 
-@export(wasm, "lipsync_alloc")
-@export(c, "lipsync_alloc")
-fn lipsync_alloc(len: Int) -> RawPtr = bytes.as_mut_ptr(bytes.new(len))
+// worklet が書き込む再利用バッファ (起動時 lipsync_init で確保)。
+var g_buf: Bytes = bytes.new(0)
+var g_n: Int = 0
 
+// n サンプル分 (f32 = 4 byte) のバッファを確保し、書き込み先オフセットを返す。
+@export(wasm, "lipsync_init")
+fn lipsync_init(n: Int) -> RawPtr = {
+  g_n = n
+  g_buf = bytes.new(n * 4)
+  bytes.as_mut_ptr(g_buf)
+}
+
+// バッファに書かれた g_n 個の f32 LE サンプルから口パクを 1 ステップ進める。
 @export(wasm, "lipsync_step")
-@export(c, "lipsync_step")
-fn lipsync_step(ptr: RawPtr, n: Int, prev: Float, attack: Float, release: Float, gain: Float, floor: Float) -> Float = {
-  let buf = bytes.from_raw_ptr(ptr, n * 4)
-  let samples = bytes.read_f32_le_array(buf, 0, n)
+fn lipsync_step(prev: Float, attack: Float, release: Float, gain: Float, floor: Float) -> Float = {
+  let samples = bytes.read_f32_le_array(g_buf, 0, g_n)
   ls.step(samples, prev, attack, release, gain, floor)
+}
+
+// codegen の tree-shaking 対策。WASM バックエンドは main の呼び出しグラフから
+// 到達可能な関数だけ本体を emit し、それ以外は `unreachable` スタブにする。
+// @export 関数はルート扱いされないので、main から参照して本体を出させる
+// (この main 自体は AudioWorklet では使わない — worklet は export を直接呼ぶ。
+//  _start でヒープ初期化のため一度走るが、init(1) は worklet の init(128) で上書き
+//  される無害な呼び出し)。
+effect fn main() -> Unit = {
+  let _p = lipsync_init(1)
+  let _m = lipsync_step(0.0, 0.6, 0.15, 4.0, 0.01)
+  ()
 }

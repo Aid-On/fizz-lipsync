@@ -40,16 +40,31 @@ FIZZ_LIPSYNC_INPUT=out.f32 FIZZ_LIPSYNC_BLOCK=512 ./build/fizz-lipsync
 
 ランタイムはこのカーブを再生に同期させるだけでよい(live 解析よりタブ間同期が正確)。
 
-## ② wasm バックエンド — AudioWorklet(ブリッジ待ち)
+## ② wasm バックエンド — AudioWorklet(動作する)
 
 `src/bridge.almd` を wasm にコンパイルすると `lipsync_init` / `lipsync_step` を
 エクスポートし、`worklet/lipsync-processor.js` がそれを 1 render quantum ごとに呼ぶ。
 
-**現状の制約**: これには almide の WASM バックエンドが RawPtr / 線形メモリブリッジ
-(`bytes.as_mut_ptr` 等)を実装している必要があるが、現状 **native cdylib 専用**で
-`--target wasm` では未実装([almide/almide#440](https://github.com/almide/almide/issues/440))。
-ブリッジが入れば、同じ DSP コアがそのまま AudioWorklet で走る。それまでは ① の
-precompute 経路を使う。
+```sh
+mkdir -p build
+almide build src/bridge.almd --target wasm -o build/lipsync.wasm
+```
+
+JS 側は:
+1. WASI import を no-op スタブで埋めて instantiate、`_start()` でヒープ初期化
+2. `lipsync_init(128)` で 128 sample 分のバッファを確保 → 線形メモリのオフセットを得る
+3. 毎 quantum、入力 Float32 ブロックをそのオフセットへ書き、`lipsync_step(prev, ...)` を呼ぶ
+
+**検証済み**: JS から書いた f32 サンプルに対する口の開き値が **native バックエンドと
+完全一致**(loud→0.6000 / silence→0.5100)。同じ DSP コアが native でも wasm でも
+同じ結果を出す。
+
+**ツールチェーン注記**: wasm 化には almide の WASM バイナリブリッジ
+`bytes.as_mut_ptr`([almide/almide#440](https://github.com/almide/almide/issues/440)
+で実装)が要る。これは未リリースなので、リリース版 v0.26.6 では `--target wasm` が
+まだ ICE する。リリースまでは ① の native precompute 経路を使う。なお `@export(wasm)`
+関数は codegen の tree-shaking で本体が落ちないよう `src/bridge.almd` の `main` から
+参照してルート化している(同 #440)。
 
 ## 開発
 
