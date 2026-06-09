@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  ALMIDE_VERSION: v0.26.6
+  ALMIDE_VERSION: v0.26.18
 
 jobs:
   test:
@@ -29,6 +29,8 @@ jobs:
           tar xzf /tmp/almide.tar.gz -C /tmp
           sudo install /tmp/almide-linux-x86_64/almide /usr/local/bin/almide
           almide --version
+
+      # ── native バックエンド (オフライン precompute CLI) ──
       - name: Type-check (native CLI)
         run: almide check src/main.almd
       - name: Run tests (DSP core)
@@ -37,3 +39,9 @@ jobs:
         run: |
           mkdir -p build
           almide build src/main.almd -o build/fizz-lipsync
+
+      # ── wasm バックエンド (AudioWorklet) ──
+      - name: Build wasm (AudioWorklet bridge)
+        run: almide build src/bridge.almd --target wasm -o build/lipsync.wasm
+      - name: Verify wasm matches native (node)
+        run: node test/wasm-smoke.mjs

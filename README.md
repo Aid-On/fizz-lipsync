@@ -59,12 +59,11 @@ JS 側は:
 完全一致**(loud→0.6000 / silence→0.5100)。同じ DSP コアが native でも wasm でも
 同じ結果を出す。
 
-**ツールチェーン注記**: wasm 化には almide の WASM バイナリブリッジ
-`bytes.as_mut_ptr`([almide/almide#440](https://github.com/almide/almide/issues/440)
-で実装)が要る。これは未リリースなので、リリース版 v0.26.6 では `--target wasm` が
-まだ ICE する。リリースまでは ① の native precompute 経路を使う。なお `@export(wasm)`
-関数は codegen の tree-shaking で本体が落ちないよう `src/bridge.almd` の `main` から
-参照してルート化している(同 #440)。
+**ツールチェーン**: wasm 化には almide の WASM バイナリブリッジ `bytes.as_mut_ptr`
+([almide/almide#440](https://github.com/almide/almide/issues/440))が要る。**v0.26.18 で
+リリース済み**なので、released almide でそのままビルドできる(CI も `--target wasm` +
+node 検証を回している)。なお `@export(wasm)` 関数は codegen の tree-shaking で本体が
+落ちないよう `src/bridge.almd` の `main` から参照してルート化している(同 #440)。
 
 ## 開発
 
