@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  ALMIDE_VERSION: v0.26.18
+  ALMIDE_VERSION: v0.27.6
 
 jobs:
   test:
